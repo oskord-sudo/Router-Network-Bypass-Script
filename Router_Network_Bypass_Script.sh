@@ -9,8 +9,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Логирование
-LOG_FILE="/tmp/router_config.log"
+LOG_FILE="/tmp/router_config_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
+exec 2>&1
 
 echo "=== Начало выполнения скрипта $(date) ==="
 
@@ -28,12 +29,12 @@ install_package() {
     
     echo "📦 Установка $package..."
     
-    if ! wget -q --timeout=30 -O "$temp_dir/$filename" "$url"; then
+    if ! wget -q --timeout=30 -O "${temp_dir}/${filename}" "$url"; then
         echo "❌ Ошибка загрузки $package"
         return 1
     fi
     
-    if ! opkg install "$temp_dir/$filename"; then
+    if ! opkg install "${temp_dir}/${filename}"; then
         echo "❌ Ошибка установки $package"
         return 1
     fi
@@ -50,11 +51,17 @@ install_awg_packages() {
         return 1
     fi
     
-    local TARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 1)
-    local SUBTARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 2)
-    local VERSION=$(ubus call system board | jsonfilter -e '@.release.version')
+    local TARGET
+    TARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 1)
+    local SUBTARGET
+    SUBTARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 2)
+    local VERSION
+    VERSION=$(ubus call system board | jsonfilter -e '@.release.version')
     
-    [ -z "$VERSION" ] && { echo "❌ Не удалось определить версию"; return 1; }
+    if [ -z "$VERSION" ]; then
+        echo "❌ Не удалось определить версию"
+        return 1
+    fi
     
     local PKGPOSTFIX="_v${VERSION}_${PKGARCH}_${TARGET}_${SUBTARGET}.ipk"
     local BASE_URL="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/"
@@ -63,12 +70,24 @@ install_awg_packages() {
     mkdir -p "$AWG_DIR"
     
     # Установка пакетов через универсальную функцию
-    install_package "kmod-amneziawg" "kmod-amneziawg${PKGPOSTFIX}" "${BASE_URL}v${VERSION}/kmod-amneziawg${PKGPOSTFIX}" "$AWG_DIR" || return 1
-    install_package "amneziawg-tools" "amneziawg-tools${PKGPOSTFIX}" "${BASE_URL}v${VERSION}/amneziawg-tools${PKGPOSTFIX}" "$AWG_DIR" || return 1
-    install_package "luci-app-amneziawg" "luci-app-amneziawg${PKGPOSTFIX}" "${BASE_URL}v${VERSION}/luci-app-amneziawg${PKGPOSTFIX}" "$AWG_DIR" || return 1
+    if ! install_package "kmod-amneziawg" "kmod-amneziawg${PKGPOSTFIX}" "${BASE_URL}v${VERSION}/kmod-amneziawg${PKGPOSTFIX}" "$AWG_DIR"; then
+        rm -rf "$AWG_DIR"
+        return 1
+    fi
+    
+    if ! install_package "amneziawg-tools" "amneziawg-tools${PKGPOSTFIX}" "${BASE_URL}v${VERSION}/amneziawg-tools${PKGPOSTFIX}" "$AWG_DIR"; then
+        rm -rf "$AWG_DIR"
+        return 1
+    fi
+    
+    if ! install_package "luci-app-amneziawg" "luci-app-amneziawg${PKGPOSTFIX}" "${BASE_URL}v${VERSION}/luci-app-amneziawg${PKGPOSTFIX}" "$AWG_DIR"; then
+        rm -rf "$AWG_DIR"
+        return 1
+    fi
     
     rm -rf "$AWG_DIR"
     echo "✅ AmneziaWG пакеты установлены успешно"
+    return 0
 }
 
 manage_package() {
@@ -77,31 +96,43 @@ manage_package() {
     local process="$3"
 
     # Проверка, установлен ли пакет
-    if opkg list-installed | grep -q "^$name "; then
+    if opkg list-installed | grep -q "^${name} "; then
         
         # Проверка, включен ли автозапуск
-        if /etc/init.d/"$name" enabled; then
+        if /etc/init.d/"$name" enabled > /dev/null 2>&1; then
             if [ "$autostart" = "disable" ]; then
-                /etc/init.d/"$name" disable
-                echo "✅ Автозапуск $name отключен"
+                if /etc/init.d/"$name" disable; then
+                    echo "✅ Автозапуск $name отключен"
+                else
+                    echo "❌ Ошибка отключения автозапуска $name"
+                fi
             fi
         else
             if [ "$autostart" = "enable" ]; then
-                /etc/init.d/"$name" enable
-                echo "✅ Автозапуск $name включен"
+                if /etc/init.d/"$name" enable; then
+                    echo "✅ Автозапуск $name включен"
+                else
+                    echo "❌ Ошибка включения автозапуска $name"
+                fi
             fi
         fi
 
         # Проверка, запущен ли процесс
-        if pgrep -f "$name" > /dev/null; then
+        if pgrep -f "$name" > /dev/null 2>&1; then
             if [ "$process" = "stop" ]; then
-                /etc/init.d/"$name" stop
-                echo "✅ Сервис $name остановлен"
+                if /etc/init.d/"$name" stop; then
+                    echo "✅ Сервис $name остановлен"
+                else
+                    echo "❌ Ошибка остановки сервиса $name"
+                fi
             fi
         else
             if [ "$process" = "start" ]; then
-                /etc/init.d/"$name" start
-                echo "✅ Сервис $name запущен"
+                if /etc/init.d/"$name" start; then
+                    echo "✅ Сервис $name запущен"
+                else
+                    echo "❌ Ошибка запуска сервиса $name"
+                fi
             fi
         fi
     else
@@ -118,16 +149,20 @@ checkPackageAndInstall() {
         alt="luci-app-doh-proxy"
     fi
 
+    local installed=0
     if [ -n "$alt" ]; then
-        if opkg list-installed | grep -qE "^($name|$alt) "; then
-            echo "✅ $name или $alt уже установлен"
-            return 0
+        if opkg list-installed | grep -q "^${name} " || opkg list-installed | grep -q "^${alt} "; then
+            installed=1
         fi
     else
-        if opkg list-installed | grep -q "^$name "; then
-            echo "✅ $name уже установлен"
-            return 0
+        if opkg list-installed | grep -q "^${name} "; then
+            installed=1
         fi
+    fi
+
+    if [ "$installed" -eq 1 ]; then
+        echo "✅ $name уже установлен"
+        return 0
     fi
 
     echo "📦 $name не установлен. Установка $name..."
@@ -137,7 +172,11 @@ checkPackageAndInstall() {
     else
         echo "❌ Ошибка установки $name"
         if [ "$isRequired" = "1" ]; then
-            echo "⚠️ Пожалуйста, установите $name вручную$( [ -n "$alt" ] && echo " или $alt") и запустите скрипт снова."
+            if [ -n "$alt" ]; then
+                echo "⚠️ Пожалуйста, установите $name или $alt вручную и запустите скрипт снова."
+            else
+                echo "⚠️ Пожалуйста, установите $name вручную и запустите скрипт снова."
+            fi
             exit 1
         fi
         return 1
@@ -147,13 +186,12 @@ checkPackageAndInstall() {
 checkAndAddDomainPermanentName() {
     local name="$1"
     local ip="$2"
-    local nameRule="option name '$name'"
+    local nameRule="option name '${name}'"
     
-    if ! uci show dhcp | grep -q "$nameRule"; then 
+    if ! uci show dhcp | grep -qF "$nameRule"; then 
         uci add dhcp domain
-        uci set "dhcp.@domain[-1].name=$name"
-        uci set "dhcp.@domain[-1].ip=$ip"
-        uci commit dhcp
+        uci set "dhcp.@domain[-1].name=${name}"
+        uci set "dhcp.@domain[-1].ip=${ip}"
         echo "✅ Добавлен домен: $name -> $ip"
     else
         echo "✅ Домен $name уже существует"
@@ -163,9 +201,12 @@ checkAndAddDomainPermanentName() {
 byPassGeoBlockComssDNS() {
     echo "🔧 Настройка dhcp для обхода геоблокировок..."
 
-    uci set dhcp.cfg01411c.strictorder='1'
-    uci set dhcp.cfg01411c.filter_aaaa='1'
-    
+    # Группируем изменения UCI
+    uci batch << EOF
+set dhcp.cfg01411c.strictorder='1'
+set dhcp.cfg01411c.filter_aaaa='1'
+EOF
+
     # Очистка существующих серверов
     while uci delete dhcp.cfg01411c.server 2>/dev/null; do :; done
     
@@ -175,10 +216,7 @@ byPassGeoBlockComssDNS() {
     uci add_list dhcp.cfg01411c.server='127.0.0.1#5055'
     uci add_list dhcp.cfg01411c.server='127.0.0.1#5056'
     uci add_list dhcp.cfg01411c.server='/*.chatgpt.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.oaistatic.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.oaiusercontent.com/127.0.0.1#5056'
     uci add_list dhcp.cfg01411c.server='/*.openai.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.microsoft.com/127.0.0.1#5056'
     
     uci commit dhcp
 
@@ -186,12 +224,10 @@ byPassGeoBlockComssDNS() {
 
     checkAndAddDomainPermanentName "chatgpt.com" "83.220.169.155"
     checkAndAddDomainPermanentName "openai.com" "83.220.169.155"
-    checkAndAddDomainPermanentName "webrtc.chatgpt.com" "83.220.169.155"
-    checkAndAddDomainPermanentName "ios.chat.openai.com" "83.220.169.155"
-    checkAndAddDomainPermanentName "searchgpt.com" "83.220.169.155"
 
     if service dnsmasq restart && service odhcpd restart; then
         echo "✅ DNS сервисы перезапущены успешно"
+        return 0
     else
         echo "❌ Ошибка перезапуска DNS сервисов"
         return 1
@@ -201,7 +237,7 @@ byPassGeoBlockComssDNS() {
 # Безопасное создание бэкапа
 create_backup() {
     local DIR="/etc/config"
-    local DIR_BACKUP="/root/backup5"
+    local DIR_BACKUP="/root/backup_openwrt_$(date +%Y%m%d_%H%M%S)"
     local config_files="network firewall doh-proxy zapret dhcp dns-failsafe-proxy"
     
     if [ ! -d "$DIR_BACKUP" ]; then
@@ -212,26 +248,29 @@ create_backup() {
         fi
         
         for file in $config_files; do
-            if [ -f "$DIR/$file" ]; then
-                if ! cp -f "$DIR/$file" "$DIR_BACKUP/$file"; then
+            if [ -f "${DIR}/${file}" ]; then
+                if cp -f "${DIR}/${file}" "${DIR_BACKUP}/${file}"; then
+                    echo "✅ Бэкап $file создан"
+                else
                     echo "❌ Ошибка при бэкапе $file"
                     return 1
                 fi
-                echo "✅ Бэкап $file создан"
             else
-                echo "⚠️ Файл $DIR/$file не существует, пропускаем"
+                echo "⚠️ Файл ${DIR}/${file} не существует, пропускаем"
             fi
         done
         echo "✅ Бэкап создан в $DIR_BACKUP"
+        return 0
     else
         echo "✅ Бэкап уже существует"
+        return 0
     fi
 }
 
 # Проверка работы сервисов
 check_service_health() {
     local service="$1"
-    local test_url="$2"
+    local test_url="${2:-}"
     
     if ! service "$service" status > /dev/null 2>&1; then
         echo "❌ Сервис $service не запущен"
@@ -239,14 +278,29 @@ check_service_health() {
     fi
     
     if [ -n "$test_url" ]; then
-        if ! curl --max-time 10 -s -o /dev/null "$test_url"; then
+        if curl --max-time 10 -s -o /dev/null "$test_url"; then
+            echo "✅ Сервис $service работает нормально"
+            return 0
+        else
             echo "⚠️ Сервис $service запущен, но тест не пройден"
             return 2
         fi
+    else
+        echo "✅ Сервис $service запущен"
+        return 0
     fi
-    
-    echo "✅ Сервис $service работает нормально"
-    return 0
+}
+
+# Проверка доступности интернета
+check_internet_connection() {
+    echo "🔍 Проверка интернет соединения..."
+    if ping -c 2 -W 5 8.8.8.8 > /dev/null 2>&1; then
+        echo "✅ Интернет соединение активно"
+        return 0
+    else
+        echo "❌ Нет интернет соединения"
+        return 1
+    fi
 }
 
 # Основная логика
@@ -255,10 +309,18 @@ main() {
     local is_reconfig_podkop="${2:-y}"
     
     echo "🚀 Запуск скрипта конфигурации OpenWRT роутера..."
+    echo "📝 Логирование в: $LOG_FILE"
+    
+    # Проверка интернета
+    if ! check_internet_connection; then
+        echo "⚠️ Продолжаем без проверки интернета..."
+    fi
     
     # Обновление списка пакетов
     echo "🔄 Обновление списка пакетов..."
-    if ! opkg update; then
+    if opkg update; then
+        echo "✅ Список пакетов обновлен"
+    else
         echo "❌ Не удалось обновить список пакетов"
         exit 1
     fi
@@ -266,7 +328,9 @@ main() {
     # Установка обязательных пакетов
     local required_packages="coreutils-base64 jq curl unzip"
     for pkg in $required_packages; do
-        checkPackageAndInstall "$pkg" "1" || exit 1
+        if ! checkPackageAndInstall "$pkg" "1"; then
+            exit 1
+        fi
     done
     
     # Установка AmneziaWG
@@ -278,22 +342,33 @@ main() {
     # Проверка версии sing-box
     local findVersion="1.12.0"
     local INSTALLED_SINGBOX_VERSION
-    INSTALLED_SINGBOX_VERSION=$(opkg list-installed | grep "^sing-box " | cut -d ' ' -f 3)
+    INSTALLED_SINGBOX_VERSION=$(opkg list-installed | grep "^sing-box " | awk '{print $3}')
     
-    if [ -n "$INSTALLED_SINGBOX_VERSION" ] && [ "$(printf '%s\n%s\n' "$findVersion" "$INSTALLED_SINGBOX_VERSION" | sort -V | tail -n1)" = "$INSTALLED_SINGBOX_VERSION" ]; then
-        echo "✅ Установленная версия sing-box $INSTALLED_SINGBOX_VERSION совместима"
+    if [ -n "$INSTALLED_SINGBOX_VERSION" ]; then
+        if [ "$(printf '%s\n%s\n' "$findVersion" "$INSTALLED_SINGBOX_VERSION" | sort -V | tail -n1)" = "$INSTALLED_SINGBOX_VERSION" ]; then
+            echo "✅ Установленная версия sing-box $INSTALLED_SINGBOX_VERSION совместима"
+        else
+            echo "🔄 Установленная версия sing-box устарела. Обновление..."
+            manage_package "podkop" "enable" "stop"
+            opkg remove --force-removal-of-dependent-packages "sing-box" 2>/dev/null || true
+            checkPackageAndInstall "sing-box" "1" || exit 1
+        fi
     else
-        echo "🔄 Установленная версия sing-box устарела или не установлена. Установка/обновление sing-box..."
-        manage_package "podkop" "enable" "stop"
-        opkg remove --force-removal-of-dependent-packages "sing-box" 2>/dev/null || true
+        echo "📦 Установка sing-box..."
         checkPackageAndInstall "sing-box" "1" || exit 1
     fi
     
     # Обновление пакетов
     echo "🔄 Обновление пакетов..."
-    opkg upgrade amneziawg-tools 2>/dev/null || true
-    opkg upgrade kmod-amneziawg 2>/dev/null || true
-    opkg upgrade luci-app-amneziawg 2>/dev/null || true
+    for pkg in amneziawg-tools kmod-amneziawg luci-app-amneziawg; do
+        if opkg list-installed | grep -q "^${pkg} "; then
+            if opkg upgrade "$pkg"; then
+                echo "✅ $pkg обновлен"
+            else
+                echo "⚠️ Не удалось обновить $pkg"
+            fi
+        fi
+    done
     
     # Проверка установки dnsmasq-full
     if opkg list-installed | grep -q "dnsmasq-full "; then
@@ -319,15 +394,16 @@ main() {
     uci commit dhcp
     
     # Создание бэкапа
-    create_backup || exit 1
+    if ! create_backup; then
+        echo "❌ Ошибка создания бэкапа"
+        exit 1
+    fi
     
     # Дополнительные пакеты
-    checkPackageAndInstall "luci-app-dns-failsafe-proxy" "0"
-    checkPackageAndInstall "opera-proxy" "0"
-    checkPackageAndInstall "zapret" "0"
-    
-    # Настройка конфигурационных файлов
-    local URL="https://raw.githubusercontent.com/routerich/RouterichAX3000_configs/refs/heads/new_awg_podkop"
+    local optional_packages="luci-app-dns-failsafe-proxy opera-proxy zapret"
+    for pkg in $optional_packages; do
+        checkPackageAndInstall "$pkg" "0"
+    done
     
     # Настройка DHCP
     echo "🔧 Настройка DHCP..."
@@ -337,30 +413,30 @@ main() {
     
     # Настройка sing-box
     echo "🔧 Настройка sing-box..."
-    cat <<'EOF' > /etc/sing-box/config.json
+    cat << 'EOF' > /etc/sing-box/config.json
 {
     "log": {
-    "disabled": true,
-    "level": "error"
-},
-"inbounds": [
-    {
-    "type": "tproxy",
-    "listen": "::",
-    "listen_port": 1100,
-    "sniff": false
+        "disabled": true,
+        "level": "error"
+    },
+    "inbounds": [
+        {
+            "type": "tproxy",
+            "listen": "::",
+            "listen_port": 1100,
+            "sniff": false
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "http",
+            "server": "127.0.0.1",
+            "server_port": 18080
+        }
+    ],
+    "route": {
+        "auto_detect_interface": true
     }
-],
-"outbounds": [
-    {
-    "type": "http",
-    "server": "127.0.0.1",
-    "server_port": 18080
-    }
-],
-"route": {
-    "auto_detect_interface": true
-}
 }
 EOF
 
@@ -372,26 +448,25 @@ EOF
     uci commit sing-box
     
     # Добавление правил firewall
-    local nameRule="option name 'Block_UDP_443'"
-    if ! uci show firewall | grep -q "$nameRule"; then
+    if ! uci show firewall | grep -q "Block_UDP_443"; then
         echo "🔧 Добавление блокировки QUIC..."
         
-        uci add firewall rule
-        uci set firewall.@rule[-1].name='Block_UDP_80'
-        uci add_list firewall.@rule[-1].proto='udp'
-        uci set firewall.@rule[-1].src='lan'
-        uci set firewall.@rule[-1].dest='wan'
-        uci set firewall.@rule[-1].dest_port='80'
-        uci set firewall.@rule[-1].target='REJECT'
-        
-        uci add firewall rule
-        uci set firewall.@rule[-1].name='Block_UDP_443'
-        uci add_list firewall.@rule[-1].proto='udp'
-        uci set firewall.@rule[-1].src='lan'
-        uci set firewall.@rule[-1].dest='wan'
-        uci set firewall.@rule[-1].dest_port='443'
-        uci set firewall.@rule[-1].target='REJECT'
-        
+        uci batch << 'EOF'
+add firewall rule
+set firewall.@rule[-1].name='Block_UDP_80'
+add_list firewall.@rule[-1].proto='udp'
+set firewall.@rule[-1].src='lan'
+set firewall.@rule[-1].dest='wan'
+set firewall.@rule[-1].dest_port='80'
+set firewall.@rule[-1].target='REJECT'
+add firewall rule
+set firewall.@rule[-1].name='Block_UDP_443'
+add_list firewall.@rule[-1].proto='udp'
+set firewall.@rule[-1].src='lan'
+set firewall.@rule[-1].dest='wan'
+set firewall.@rule[-1].dest_port='443'
+set firewall.@rule[-1].target='REJECT'
+EOF
         uci commit firewall
         echo "✅ Правила firewall добавлены"
     else
@@ -420,10 +495,13 @@ EOF
     echo "🎉 Конфигурация завершена успешно!"
     echo "📋 Лог сохранен в: $LOG_FILE"
     echo "💡 Рекомендуется перезагрузить роутер для применения всех изменений"
+    
+    return 0
 }
 
 # Обработка сигналов
-trap 'echo "❌ Скрипт прерван"; exit 1' INT TERM
+trap 'echo "❌ Скрипт прерван пользователем"; exit 130' INT
+trap 'echo "❌ Скрипт завершен аварийно"; exit 1' TERM
 
 # Запуск основной функции
 main "$@"
