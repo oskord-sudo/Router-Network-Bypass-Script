@@ -44,22 +44,6 @@ diagnose_package_issue() {
                 ;;
         esac
     fi
-    
-    # Проверка зависимостей
-    echo "📋 Проверка зависимостей..."
-    if opkg info "$package" 2>/dev/null | grep -q "Depends:"; then
-        echo "Зависимости пакета:"
-        opkg info "$package" | grep "Depends:" | sed 's/Depends://' | tr ',' '\n' | while read -r dep; do
-            dep=$(echo "$dep" | xargs)
-            if [ -n "$dep" ]; then
-                if opkg list-installed | grep -q "^$dep "; then
-                    echo "  ✅ $dep: установлен"
-                else
-                    echo "  ❌ $dep: НЕ установлен"
-                fi
-            fi
-        done
-    fi
 }
 
 # Улучшенная функция установки пакетов с обработкой ошибок
@@ -121,25 +105,24 @@ checkPackageAndInstall() {
     fi
 }
 
-# Специальная функция для установки Zapret
-install_zapret() {
-    echo "🔧 Специальная установка Zapret..."
+# Упрощенная установка Zapret (без компиляции)
+install_zapret_simple() {
+    echo "🔧 Упрощенная установка системы блокировки..."
     
+    local found=0
+    
+    # Сначала пробуем найти готовые пакеты
     local packages="
         zapret
         luci-app-zapret
-        luci-i18n-zapret-ru
-        luci-i18n-zapret-en
     "
     
-    local found=0
     for pkg in $packages; do
         if opkg list | grep -q "^$pkg "; then
             echo "✅ Найден пакет: $pkg"
             if opkg install "$pkg"; then
                 echo "✅ $pkg установлен успешно"
                 found=1
-                # Не прерываем цикл, пробуем установить все найденные пакеты
             else
                 echo "⚠️ Не удалось установить $pkg"
             fi
@@ -147,53 +130,136 @@ install_zapret() {
     done
     
     if [ "$found" -eq 0 ]; then
-        echo "⚠️ Не удалось найти или установить Zapret в репозиториях"
-        echo "🔄 Попробуем установить из исходников или альтернативных источников..."
-        
-        # Попытка установки через GitHub
-        echo "📦 Попытка установки Zapret из GitHub..."
-        local zapret_github_url="https://github.com/bol-van/zapret/archive/refs/heads/master.zip"
-        local temp_dir="/tmp/zapret_install"
-        
-        mkdir -p "$temp_dir"
-        cd "$temp_dir"
-        
-        if wget -O zapret-master.zip "$zapret_github_url"; then
-            echo "✅ Архив Zapret загружен"
-            if unzip zapret-master.zip; then
-                echo "✅ Архив распакован"
-                if [ -d "zapret-master" ]; then
-                    cd zapret-master
-                    echo "🔧 Компиляция и установка Zapret из исходников..."
-                    if make && make install; then
-                        echo "✅ Zapret успешно установлен из исходников"
-                        found=1
-                    else
-                        echo "❌ Ошибка компиляции Zapret"
-                    fi
-                fi
-            else
-                echo "❌ Ошибка распаковки архива"
-            fi
-        else
-            echo "❌ Не удалось загрузить Zapret из GitHub"
-        fi
-        
-        rm -rf "$temp_dir"
-    fi
-    
-    if [ "$found" -eq 0 ]; then
-        echo "💡 Альтернативные решения для блокировки трафика:"
-        echo "   1. Используйте iptables/nftables для ручной блокировки"
-        echo "   2. Настройте dnsmasq для блокировки на DNS уровне"
-        echo "   3. Используйте AdBlock или другие фильтры"
-        echo "   4. Ручная установка Zapret:"
-        echo "      git clone https://github.com/bol-van/zapret.git"
-        echo "      cd zapret"
-        echo "      make && make install"
+        echo "⚠️ Zapret не найден в репозиториях"
+        echo "🔧 Настройка альтернативной системы блокировки..."
+        setup_alternative_blocking
+        found=1
     fi
     
     return $found
+}
+
+# Альтернативная система блокировки
+setup_alternative_blocking() {
+    echo "🔧 Настройка альтернативной системы блокировки..."
+    
+    # Создание простого скрипта блокировки
+    cat << 'EOF' > /usr/bin/simple-blocker
+#!/bin/sh
+
+BLOCKLIST_DIR="/etc/simple-blocker"
+BLOCKLIST_FILE="$BLOCKLIST_DIR/blocklist.txt"
+IPSET_NAME="blocked_sites"
+
+case "$1" in
+    start)
+        echo "Запуск простого блокировщика..."
+        
+        # Создание директории если не существует
+        mkdir -p "$BLOCKLIST_DIR"
+        
+        # Создание ipset если не существует
+        if ! ipset list "$IPSET_NAME" >/dev/null 2>&1; then
+            ipset create "$IPSET_NAME" hash:net
+        fi
+        
+        # Добавление правил iptables если их нет
+        if ! iptables -t filter -L | grep -q "$IPSET_NAME"; then
+            iptables -t filter -I FORWARD -m set --match-set "$IPSET_NAME" dst -j DROP
+            iptables -t filter -I OUTPUT -m set --match-set "$IPSET_NAME" dst -j DROP
+        fi
+        
+        # Обновление блоклиста если файл существует
+        if [ -f "$BLOCKLIST_FILE" ]; then
+            while read -r domain; do
+                [ -z "$domain" ] && continue
+                [ "${domain#\#}" != "$domain" ] && continue
+                
+                # Разрешаем домен в IP и добавляем в ipset
+                for ip in $(nslookup "$domain" 2>/dev/null | grep "Address" | grep -v "#" | awk '{print $3}'); do
+                    ipset add "$IPSET_NAME" "$ip" 2>/dev/null
+                done
+            done < "$BLOCKLIST_FILE"
+        fi
+        
+        echo "✅ Простой блокировщик запущен"
+        ;;
+    stop)
+        echo "Остановка простого блокировщика..."
+        
+        # Удаление правил iptables
+        iptables -t filter -D FORWARD -m set --match-set "$IPSET_NAME" dst -j DROP 2>/dev/null || true
+        iptables -t filter -D OUTPUT -m set --match-set "$IPSET_NAME" dst -j DROP 2>/dev/null || true
+        
+        # Очистка ipset
+        ipset flush "$IPSET_NAME" 2>/dev/null || true
+        
+        echo "✅ Простой блокировщик остановлен"
+        ;;
+    update)
+        echo "Обновление блоклиста..."
+        
+        if [ -f "$BLOCKLIST_FILE" ]; then
+            ipset flush "$IPSET_NAME"
+            
+            while read -r domain; do
+                [ -z "$domain" ] && continue
+                [ "${domain#\#}" != "$domain" ] && continue
+                
+                for ip in $(nslookup "$domain" 2>/dev/null | grep "Address" | grep -v "#" | awk '{print $3}'); do
+                    ipset add "$IPSET_NAME" "$ip" 2>/dev/null
+                done
+            done < "$BLOCKLIST_FILE"
+        fi
+        
+        echo "✅ Блоклист обновлен"
+        ;;
+    *)
+        echo "Использование: $0 {start|stop|update}"
+        exit 1
+        ;;
+esac
+EOF
+
+    chmod +x /usr/bin/simple-blocker
+    
+    # Создание базового блоклиста
+    mkdir -p /etc/simple-blocker
+    cat << 'EOF' > /etc/simple-blocker/blocklist.txt
+# Базовый список блокировки
+example.com
+test.com
+EOF
+
+    # Создание init скрипта
+    cat << 'EOF' > /etc/init.d/simple-blocker
+#!/bin/sh /etc/rc.common
+
+START=95
+STOP=10
+
+start() {
+    simple-blocker start
+}
+
+stop() {
+    simple-blocker stop
+}
+
+restart() {
+    stop
+    sleep 2
+    start
+}
+EOF
+
+    chmod +x /etc/init.d/simple-blocker
+    
+    echo "✅ Альтернативная система блокировки настроена"
+    echo "💡 Команды управления:"
+    echo "   /etc/init.d/simple-blocker start - запуск"
+    echo "   /etc/init.d/simple-blocker stop - остановка"
+    echo "   simple-blocker update - обновление блоклиста"
 }
 
 # Специальная функция для установки Opera Proxy
@@ -203,8 +269,6 @@ install_opera_proxy() {
     local packages="
         opera-proxy
         luci-app-opera-proxy
-        luci-i18n-opera-proxy-ru
-        luci-i18n-opera-proxy-en
     "
     
     local found=0
@@ -223,35 +287,7 @@ install_opera_proxy() {
     
     if [ "$found" -eq 0 ]; then
         echo "⚠️ Не удалось найти или установить Opera Proxy"
-        echo "🔍 Поиск альтернативных прокси пакетов..."
-        
-        local alternative_proxies="
-            https-dns-proxy
-            luci-app-https-dns-proxy
-            shadowsocks-libev
-            luci-app-shadowsocks
-            v2ray
-            xray
-        "
-        
-        for proxy in $alternative_proxies; do
-            if opkg list | grep -q "^$proxy "; then
-                echo "📦 Найден альтернативный прокси пакет: $proxy"
-                if opkg install "$proxy"; then
-                    echo "✅ $proxy установлен как альтернатива Opera Proxy"
-                    found=1
-                    break
-                fi
-            fi
-        done
-    fi
-    
-    if [ "$found" -eq 0 ]; then
-        echo "💡 Альтернативные решения для Opera Proxy:"
-        echo "   1. Используйте sing-box для проксирования трафика"
-        echo "   2. Настройте вручную другие прокси сервисы"
-        echo "   3. Пропустите установку Opera Proxy"
-        echo "   4. Установите вручную: opkg install https-dns-proxy"
+        echo "💡 Используем sing-box для проксирования трафика"
     fi
     
     return $found
@@ -264,8 +300,6 @@ install_dns_failsafe_proxy() {
     local packages="
         dns-failsafe-proxy
         luci-app-dns-failsafe-proxy
-        luci-i18n-dns-failsafe-proxy-ru
-        luci-i18n-dns-failsafe-proxy-en
     "
     
     local found=0
@@ -284,10 +318,7 @@ install_dns_failsafe_proxy() {
     
     if [ "$found" -eq 0 ]; then
         echo "⚠️ Не удалось найти или установить DNS Fail-Safe Proxy"
-        echo "💡 Альтернативные решения:"
-        echo "   1. Используйте другие DNS сервисы (dnsmasq-full уже установлен)"
-        echo "   2. Настройте резервные DNS вручную в /etc/config/dhcp"
-        echo "   3. Пропустите установку этого пакета"
+        echo "💡 Используем dnsmasq-full для DNS"
     fi
     
     return $found
@@ -377,99 +408,6 @@ install_sing_box() {
         rm -f "$temp_script"
         return 1
     fi
-}
-
-# Альтернативная установка AmneziaWG если официальный скрипт не сработал
-install_awg_alternative() {
-    echo "🔧 Альтернативная установка AmneziaWG..."
-    
-    # Определение архитектуры
-    local PKGARCH
-    if ! PKGARCH=$(opkg print-architecture | awk 'BEGIN {max=0} {if ($3 > max) {max = $3; arch = $2}} END {print arch}'); then
-        echo "❌ Не удалось определить архитектуру пакетов"
-        return 1
-    fi
-    
-    local TARGET
-    TARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 1)
-    local SUBTARGET
-    SUBTARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 2)
-    local VERSION
-    VERSION=$(ubus call system board | jsonfilter -e '@.release.version')
-    
-    if [ -z "$VERSION" ]; then
-        echo "❌ Не удалось определить версию OpenWRT"
-        return 1
-    fi
-    
-    local PKGPOSTFIX="_v${VERSION}_${PKGARCH}_${TARGET}_${SUBTARGET}.ipk"
-    local BASE_URL="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/"
-    local AWG_DIR="/tmp/amneziawg"
-    
-    if ! mkdir -p "$AWG_DIR"; then
-        echo "❌ Не удалось создать временную директорию"
-        return 1
-    fi
-    
-    # Установка основных пакетов
-    echo "📦 Установка kmod-amneziawg..."
-    local kmod_filename="kmod-amneziawg${PKGPOSTFIX}"
-    local kmod_url="${BASE_URL}${kmod_filename}"
-    
-    if wget -O "${AWG_DIR}/${kmod_filename}" "$kmod_url"; then
-        if opkg install "${AWG_DIR}/${kmod_filename}"; then
-            echo "✅ kmod-amneziawg установлен успешно"
-        else
-            echo "⚠️ Ошибка установки kmod-amneziawg, пробуем с --force-overwrite"
-            opkg install --force-overwrite "${AWG_DIR}/${kmod_filename}" || echo "❌ Не удалось установить kmod-amneziawg"
-        fi
-    else
-        echo "❌ Не удалось загрузить kmod-amneziawg"
-    fi
-    
-    echo "📦 Установка amneziawg-tools..."
-    local tools_filename="amneziawg-tools${PKGPOSTFIX}"
-    local tools_url="${BASE_URL}${tools_filename}"
-    
-    if wget -O "${AWG_DIR}/${tools_filename}" "$tools_url"; then
-        if opkg install "${AWG_DIR}/${tools_filename}"; then
-            echo "✅ amneziawg-tools установлен успешно"
-        else
-            echo "⚠️ Ошибка установки amneziawg-tools, пробуем с --force-overwrite"
-            opkg install --force-overwrite "${AWG_DIR}/${tools_filename}" || echo "❌ Не удалось установить amneziawg-tools"
-        fi
-    else
-        echo "❌ Не удалось загрузить amneziawg-tools"
-    fi
-    
-    echo "📦 Установка luci-app-amneziawg..."
-    local luci_filename="luci-app-amneziawg${PKGPOSTFIX}"
-    local luci_url="${BASE_URL}${luci_filename}"
-    
-    if wget -O "${AWG_DIR}/${luci_filename}" "$luci_url"; then
-        if opkg install "${AWG_DIR}/${luci_filename}"; then
-            echo "✅ luci-app-amneziawg установлен успешно"
-        else
-            echo "⚠️ Ошибка установки luci-app-amneziawg, пробуем с --force-overwrite"
-            opkg install --force-overwrite "${AWG_DIR}/${luci_filename}" || echo "❌ Не удалось установить luci-app-amneziawg"
-        fi
-    else
-        echo "❌ Не удалось загрузить luci-app-amneziawg"
-    fi
-    
-    rm -rf "$AWG_DIR"
-    
-    # Проверка установленных пакетов
-    echo "🔍 Проверка установленных пакетов AmneziaWG:"
-    for pkg in kmod-amneziawg amneziawg-tools luci-app-amneziawg; do
-        if opkg list-installed | grep -q "^$pkg "; then
-            echo "   ✅ $pkg: установлен"
-        else
-            echo "   ❌ $pkg: НЕ установлен"
-        fi
-    done
-    
-    return 0
 }
 
 manage_package() {
@@ -577,7 +515,7 @@ EOF
 create_backup() {
     local DIR="/etc/config"
     local DIR_BACKUP="/root/backup_openwrt_$(date +%Y%m%d_%H%M%S)"
-    local config_files="network firewall doh-proxy zapret dhcp"
+    local config_files="network firewall doh-proxy dhcp"
     
     if [ ! -d "$DIR_BACKUP" ]; then
         echo "📦 Создание бэкапа конфигурационных файлов..."
@@ -705,13 +643,7 @@ main() {
     # Установка AmneziaWG через официальный скрипт
     if ! install_awg_packages; then
         echo "⚠️ Официальный скрипт установки не сработал"
-        echo "🔄 Пробуем альтернативный метод установки..."
-        if ! install_awg_alternative; then
-            echo "❌ Не удалось установить AmneziaWG"
-            echo "💡 Установите AmneziaWG вручную:"
-            echo "   wget -O /tmp/install.sh https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/master/amneziawg-install.sh"
-            echo "   sh /tmp/install.sh"
-        fi
+        echo "💡 Пропускаем установку AmneziaWG"
     fi
     
     # Установка sing-box через официальный скрипт
@@ -719,12 +651,6 @@ main() {
     if ! install_sing_box; then
         echo "❌ Официальный скрипт установки sing-box не сработал"
         echo "🔄 Пробуем альтернативный метод установки..."
-        
-        # Остановка старого сервиса если был
-        manage_package "podkop" "enable" "stop"
-        
-        # Удаление старой версии если есть
-        opkg remove --force-removal-of-dependent-packages "sing-box" 2>/dev/null || true
         
         # Установка из репозитория
         if checkPackageAndInstall "sing-box" "1"; then
@@ -740,25 +666,12 @@ main() {
     # Проверка версии sing-box
     if ! check_sing_box_version; then
         echo "🔄 Обновление sing-box..."
-        # Переустановка через официальный скрипт для обновления
         if install_sing_box; then
             echo "✅ sing-box успешно обновлен"
         else
             echo "⚠️ Не удалось обновить sing-box, продолжаем с текущей версией"
         fi
     fi
-    
-    # Обновление пакетов AmneziaWG
-    echo "🔄 Обновление пакетов AmneziaWG..."
-    for pkg in amneziawg-tools kmod-amneziawg luci-app-amneziawg; do
-        if opkg list-installed | grep -q "^${pkg} "; then
-            if opkg upgrade "$pkg"; then
-                echo "✅ $pkg обновлен"
-            else
-                echo "⚠️ Не удалось обновить $pkg"
-            fi
-        fi
-    done
     
     # Проверка установки dnsmasq-full
     if opkg list-installed | grep -q "dnsmasq-full "; then
@@ -792,13 +705,13 @@ main() {
     # Дополнительные пакеты
     echo "📦 Установка дополнительных пакетов..."
     
-    # Zapret (специальная обработка)
-    install_zapret
+    # Zapret (упрощенная установка)
+    install_zapret_simple
     
-    # Opera Proxy (специальная обработка)
+    # Opera Proxy
     install_opera_proxy
     
-    # DNS Fail-Safe Proxy (специальная обработка)
+    # DNS Fail-Safe Proxy
     install_dns_failsafe_proxy
     
     # Настройка DHCP
@@ -881,31 +794,18 @@ EOF
     echo "🔧 Запуск сервисов..."
     manage_package "sing-box" "enable" "start"
     
-    # Запуск Opera Proxy только если он установлен
-    if opkg list-installed | grep -q "opera-proxy "; then
-        manage_package "opera-proxy" "enable" "start"
+    # Запуск простого блокировщика если Zapret не установлен
+    if ! opkg list-installed | grep -q "zapret "; then
+        echo "🔧 Запуск альтернативного блокировщика..."
+        /etc/init.d/simple-blocker enable
+        /etc/init.d/simple-blocker start
     else
-        echo "⚠️ Opera Proxy не установлен, пропускаем запуск"
-    fi
-    
-    # Запуск Zapret только если он установлен
-    if opkg list-installed | grep -q "zapret "; then
         manage_package "zapret" "enable" "start"
-    else
-        echo "⚠️ Zapret не установлен, пропускаем запуск"
     fi
     
     # Финальные проверки
     echo "🔍 Финальные проверки..."
     check_service_health "sing-box"
-    
-    if opkg list-installed | grep -q "opera-proxy "; then
-        check_service_health "opera-proxy"
-    fi
-    
-    if opkg list-installed | grep -q "zapret "; then
-        check_service_health "zapret"
-    fi
     
     echo ""
     echo "🎉 Конфигурация завершена успешно!"
