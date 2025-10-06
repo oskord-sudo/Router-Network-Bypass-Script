@@ -62,7 +62,55 @@ install_awg_packages() {
     fi
 }
 
-# Альтернативная установка если официальный скрипт не сработал
+# Безопасная установка sing-box через официальный скрипт
+install_sing_box() {
+    echo "🔧 Установка sing-box через официальный скрипт..."
+    
+    local install_url="https://sing-box.app/install.sh"
+    local temp_script="/tmp/sing-box-install.sh"
+    
+    # Проверка доступности скрипта установки
+    echo "📡 Проверка доступности скрипта установки sing-box..."
+    if ! curl -fsSL --head "$install_url" > /dev/null 2>&1; then
+        echo "❌ Скрипт установки sing-box недоступен"
+        return 1
+    fi
+    
+    echo "✅ Скрипт установки sing-box доступен"
+    
+    # Безопасная загрузка скрипта
+    echo "⬇️  Загрузка скрипта установки sing-box..."
+    if ! curl -fsSL -o "$temp_script" "$install_url"; then
+        echo "❌ Ошибка загрузки скрипта установки sing-box"
+        return 1
+    fi
+    
+    # Проверка что файл не пустой
+    if [ ! -s "$temp_script" ]; then
+        echo "❌ Загруженный скрипт sing-box пуст"
+        rm -f "$temp_script"
+        return 1
+    fi
+    
+    # Проверка что это bash скрипт
+    if ! head -n 5 "$temp_script" | grep -q "bash\|sh"; then
+        echo "⚠️  Загруженный файл sing-box может не быть скриптом"
+    fi
+    
+    echo "🔧 Установка sing-box..."
+    # Выполнение скрипта
+    if sh "$temp_script"; then
+        echo "✅ sing-box успешно установлен через официальный скрипт"
+        rm -f "$temp_script"
+        return 0
+    else
+        echo "❌ Ошибка установки sing-box через официальный скрипт"
+        rm -f "$temp_script"
+        return 1
+    fi
+}
+
+# Альтернативная установка AmneziaWG если официальный скрипт не сработал
 install_awg_alternative() {
     echo "🔧 Альтернативная установка AmneziaWG..."
     
@@ -368,6 +416,36 @@ check_internet_connection() {
     fi
 }
 
+# Проверка версии sing-box
+check_sing_box_version() {
+    echo "🔍 Проверка версии sing-box..."
+    
+    if command -v sing-box > /dev/null 2>&1; then
+        local current_version
+        current_version=$(sing-box version 2>/dev/null | grep -o 'version [0-9.]*' | cut -d' ' -f2)
+        
+        if [ -n "$current_version" ]; then
+            echo "✅ Текущая версия sing-box: $current_version"
+            
+            # Проверяем минимальную требуемую версию
+            local min_version="1.12.0"
+            if [ "$(printf '%s\n%s\n' "$min_version" "$current_version" | sort -V | tail -n1)" = "$current_version" ]; then
+                echo "✅ Версия sing-box совместима"
+                return 0
+            else
+                echo "⚠️ Версия sing-box устарела ($current_version < $min_version)"
+                return 1
+            fi
+        else
+            echo "⚠️ Не удалось определить версию sing-box"
+            return 2
+        fi
+    else
+        echo "❌ sing-box не установлен"
+        return 3
+    fi
+}
+
 # Основная логика
 main() {
     local is_manual_input_parameters="${1:-n}"
@@ -410,27 +488,42 @@ main() {
         fi
     fi
     
-    # Проверка версии sing-box
-    local findVersion="1.12.0"
-    local INSTALLED_SINGBOX_VERSION
-    INSTALLED_SINGBOX_VERSION=$(opkg list-installed | grep "^sing-box " | awk '{print $3}')
-    
-    if [ -n "$INSTALLED_SINGBOX_VERSION" ]; then
-        if [ "$(printf '%s\n%s\n' "$findVersion" "$INSTALLED_SINGBOX_VERSION" | sort -V | tail -n1)" = "$INSTALLED_SINGBOX_VERSION" ]; then
-            echo "✅ Установленная версия sing-box $INSTALLED_SINGBOX_VERSION совместима"
+    # Установка sing-box через официальный скрипт
+    echo "🔧 Установка sing-box..."
+    if ! install_sing_box; then
+        echo "❌ Официальный скрипт установки sing-box не сработал"
+        echo "🔄 Пробуем альтернативный метод установки..."
+        
+        # Остановка старого сервиса если был
+        manage_package "podkop" "enable" "stop"
+        
+        # Удаление старой версии если есть
+        opkg remove --force-removal-of-dependent-packages "sing-box" 2>/dev/null || true
+        
+        # Установка из репозитория
+        if checkPackageAndInstall "sing-box" "1"; then
+            echo "✅ sing-box установлен из репозитория"
         else
-            echo "🔄 Установленная версия sing-box устарела. Обновление..."
-            manage_package "podkop" "enable" "stop"
-            opkg remove --force-removal-of-dependent-packages "sing-box" 2>/dev/null || true
-            checkPackageAndInstall "sing-box" "1" || exit 1
+            echo "❌ Не удалось установить sing-box"
+            echo "💡 Установите sing-box вручную:"
+            echo "   curl -fsSL https://sing-box.app/install.sh | sh"
+            exit 1
         fi
-    else
-        echo "📦 Установка sing-box..."
-        checkPackageAndInstall "sing-box" "1" || exit 1
     fi
     
-    # Обновление пакетов
-    echo "🔄 Обновление пакетов..."
+    # Проверка версии sing-box
+    if ! check_sing_box_version; then
+        echo "🔄 Обновление sing-box..."
+        # Переустановка через официальный скрипт для обновления
+        if install_sing_box; then
+            echo "✅ sing-box успешно обновлен"
+        else
+            echo "⚠️ Не удалось обновить sing-box, продолжаем с текущей версией"
+        fi
+    fi
+    
+    # Обновление пакетов AmneziaWG
+    echo "🔄 Обновление пакетов AmneziaWG..."
     for pkg in amneziawg-tools kmod-amneziawg luci-app-amneziawg; do
         if opkg list-installed | grep -q "^${pkg} "; then
             if opkg upgrade "$pkg"; then
