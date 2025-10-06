@@ -45,16 +45,23 @@ install_package() {
 install_awg_packages() {
     echo "🔧 Установка AmneziaWG пакетов..."
     
+    local PKGARCH
     if ! PKGARCH=$(opkg print-architecture | awk 'BEGIN {max=0} {if ($3 > max) {max = $3; arch = $2}} END {print arch}'); then
         echo "❌ Не удалось определить архитектуру пакетов"
         return 1
     fi
     
-    local TARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 1)
-    local SUBTARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 2)
-    local VERSION=$(ubus call system board | jsonfilter -e '@.release.version')
+    local TARGET
+    TARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 1)
+    local SUBTARGET
+    SUBTARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 2)
+    local VERSION
+    VERSION=$(ubus call system board | jsonfilter -e '@.release.version')
     
-    [ -z "$VERSION" ] && { echo "❌ Не удалось определить версию"; return 1; }
+    if [ -z "$VERSION" ]; then
+        echo "❌ Не удалось определить версию"
+        return 1
+    fi
     
     local PKGPOSTFIX="_v${VERSION}_${PKGARCH}_${TARGET}_${SUBTARGET}.ipk"
     local BASE_URL="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/"
@@ -262,6 +269,7 @@ check_request() {
         *)
             echo "Error: Неверный выбор"
             return 1
+            ;;
         esac
     else
         echo "Error: HTTP код $response_code"
@@ -400,12 +408,14 @@ deleteByPassGeoBlockComssDNS() {
 install_youtubeunblock_packages() {
     echo "📦 Установка YouTube Unblock пакетов..."
     
+    local PKGARCH
     if ! PKGARCH=$(opkg print-architecture | awk 'BEGIN {max=0} {if ($3 > max) {max = $3; arch = $2}} END {print arch}'); then
         echo "❌ Не удалось определить архитектуру пакетов"
         return 1
     fi
     
-    local VERSION=$(ubus call system board | jsonfilter -e '@.release.version')
+    local VERSION
+    VERSION=$(ubus call system board | jsonfilter -e '@.release.version')
     local BASE_URL="https://github.com/Waujito/youtubeUnblock/releases/download/v1.1.0/"
     local PACK_NAME="youtubeUnblock"
     local AWG_DIR="/tmp/$PACK_NAME"
@@ -675,7 +685,7 @@ EOF
     # Проверка работы zapret
     local isWorkZapret=0
     if curl -f -o /dev/null -k --connect-to ::google.com -L -H "Host: mirror.gcr.io" --max-time 120 \
-       "https://test.googlevideo.com/v2/cimg/android/blobs/sha256:2ab09b027e7f3a0c2e8bb1944ac46de38cebab7145" ; then
+       "https://test.googlevideo.com/v2/cimg/android/blobs/sha256:2ab09b027e7f3a0c2e8bb1944ac46de38cebab7145"; then
         isWorkZapret=1
         echo "✅ Zapret работает корректно"
     else
