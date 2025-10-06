@@ -14,6 +14,136 @@ exec 2>&1
 
 echo "=== Начало выполнения скрипта $(date) ==="
 
+# Функция для диагностики проблем с пакетами
+diagnose_package_issue() {
+    local package="$1"
+    echo "🔍 Диагностика проблемы с пакетом: $package"
+    
+    # Проверка доступности пакета в репозиториях
+    echo "📦 Поиск пакета в репозиториях..."
+    if opkg list | grep -q "^$package "; then
+        echo "✅ Пакет найден в репозитории"
+        opkg info "$package" | head -5
+    else
+        echo "❌ Пакет не найден в репозиториях"
+        
+        # Поиск альтернативных имен
+        echo "🔍 Поиск альтернативных имен пакета..."
+        opkg list | grep -i "dns.*fail.*safe\|fail.*safe.*dns" | head -5
+    fi
+    
+    # Проверка зависимостей
+    echo "📋 Проверка зависимостей..."
+    if opkg info "$package" 2>/dev/null | grep -q "Depends:"; then
+        echo "Зависимости пакета:"
+        opkg info "$package" | grep "Depends:" | sed 's/Depends://' | tr ',' '\n' | while read -r dep; do
+            dep=$(echo "$dep" | xargs)
+            if [ -n "$dep" ]; then
+                if opkg list-installed | grep -q "^$dep "; then
+                    echo "  ✅ $dep: установлен"
+                else
+                    echo "  ❌ $dep: НЕ установлен"
+                fi
+            fi
+        done
+    fi
+}
+
+# Улучшенная функция установки пакетов с обработкой ошибок
+checkPackageAndInstall() {
+    local name="$1"
+    local isRequired="${2:-0}"
+    local alt="${3:-}"
+
+    echo "📦 Обработка пакета: $name"
+    
+    # Проверка, установлен ли уже пакет
+    if opkg list-installed | grep -q "^${name} "; then
+        echo "✅ $name уже установлен"
+        return 0
+    fi
+
+    # Проверка альтернативных пакетов
+    if [ -n "$alt" ]; then
+        if opkg list-installed | grep -q "^${alt} "; then
+            echo "✅ Альтернативный пакет $alt уже установлен"
+            return 0
+        fi
+    fi
+
+    echo "🔄 Установка $name..."
+    
+    # Попытка установки
+    if opkg install "$name"; then
+        echo "✅ $name установлен успешно"
+        return 0
+    else
+        echo "❌ Ошибка установки $name"
+        
+        # Диагностика проблемы
+        diagnose_package_issue "$name"
+        
+        # Попробовать альтернативный пакет
+        if [ -n "$alt" ]; then
+            echo "🔄 Попытка установки альтернативного пакета: $alt"
+            if opkg install "$alt"; then
+                echo "✅ Альтернативный пакет $alt установлен успешно"
+                return 0
+            else
+                echo "❌ Ошибка установки альтернативного пакета $alt"
+            fi
+        fi
+        
+        if [ "$isRequired" = "1" ]; then
+            echo "💡 Решение проблемы:"
+            echo "   1. Проверьте подключение к интернету: opkg update"
+            echo "   2. Убедитесь что репозитории настроены правильно"
+            echo "   3. Попробуйте установить пакет вручную"
+            if [ -n "$alt" ]; then
+                echo "   4. Или установите альтернативный пакет: $alt"
+            fi
+            exit 1
+        fi
+        return 1
+    fi
+}
+
+# Специальная функция для проблемных пакетов
+install_dns_failsafe_proxy() {
+    echo "🔧 Специальная установка DNS Fail-Safe Proxy..."
+    
+    local packages="
+        dns-failsafe-proxy
+        luci-app-dns-failsafe-proxy
+        luci-i18n-dns-failsafe-proxy-ru
+        luci-i18n-dns-failsafe-proxy-en
+    "
+    
+    local found=0
+    for pkg in $packages; do
+        if opkg list | grep -q "^$pkg "; then
+            echo "✅ Найден пакет: $pkg"
+            if opkg install "$pkg"; then
+                echo "✅ $pkg установлен успешно"
+                found=1
+                break
+            else
+                echo "⚠️ Не удалось установить $pkg"
+            fi
+        fi
+    done
+    
+    if [ "$found" -eq 0 ]; then
+        echo "⚠️ Не удалось найти или установить DNS Fail-Safe Proxy"
+        echo "💡 Альтернативные решения:"
+        echo "   1. Используйте другие DNS сервисы (dnsmasq-full уже установлен)"
+        echo "   2. Настройте резервные DNS вручную в /etc/config/dhcp"
+        echo "   3. Пропустите установку этого пакета"
+    fi
+    
+    return $found
+}
+
 # Безопасная установка AmneziaWG через официальный скрипт
 install_awg_packages() {
     echo "🔧 Установка AmneziaWG через официальный скрипт..."
@@ -253,49 +383,6 @@ manage_package() {
     fi
 }
 
-checkPackageAndInstall() {
-    local name="$1"
-    local isRequired="${2:-0}"
-    local alt=""
-
-    if [ "$name" = "https-dns-proxy" ]; then
-        alt="luci-app-doh-proxy"
-    fi
-
-    local installed=0
-    if [ -n "$alt" ]; then
-        if opkg list-installed | grep -q "^${name} " || opkg list-installed | grep -q "^${alt} "; then
-            installed=1
-        fi
-    else
-        if opkg list-installed | grep -q "^${name} "; then
-            installed=1
-        fi
-    fi
-
-    if [ "$installed" -eq 1 ]; then
-        echo "✅ $name уже установлен"
-        return 0
-    fi
-
-    echo "📦 $name не установлен. Установка $name..."
-    if opkg install "$name"; then
-        echo "✅ $name установлен успешно"
-        return 0
-    else
-        echo "❌ Ошибка установки $name"
-        if [ "$isRequired" = "1" ]; then
-            if [ -n "$alt" ]; then
-                echo "⚠️ Пожалуйста, установите $name или $alt вручную и запустите скрипт снова."
-            else
-                echo "⚠️ Пожалуйста, установите $name вручную и запустите скрипт снова."
-            fi
-            exit 1
-        fi
-        return 1
-    fi
-}
-
 checkAndAddDomainPermanentName() {
     local name="$1"
     local ip="$2"
@@ -351,7 +438,7 @@ EOF
 create_backup() {
     local DIR="/etc/config"
     local DIR_BACKUP="/root/backup_openwrt_$(date +%Y%m%d_%H%M%S)"
-    local config_files="network firewall doh-proxy zapret dhcp dns-failsafe-proxy"
+    local config_files="network firewall doh-proxy zapret dhcp"
     
     if [ ! -d "$DIR_BACKUP" ]; then
         echo "📦 Создание бэкапа конфигурационных файлов..."
@@ -564,10 +651,16 @@ main() {
     fi
     
     # Дополнительные пакеты
-    local optional_packages="luci-app-dns-failsafe-proxy opera-proxy zapret"
-    for pkg in $optional_packages; do
-        checkPackageAndInstall "$pkg" "0"
-    done
+    echo "📦 Установка дополнительных пакетов..."
+    
+    # Opera Proxy
+    checkPackageAndInstall "opera-proxy" "0"
+    
+    # Zapret
+    checkPackageAndInstall "zapret" "0"
+    
+    # DNS Fail-Safe Proxy (специальная обработка)
+    install_dns_failsafe_proxy
     
     # Настройка DHCP
     echo "🔧 Настройка DHCP..."
