@@ -8,11 +8,10 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Логирование
+# Логирование (упрощенная версия для /bin/sh)
 LOG_FILE="/tmp/router_config.log"
-exec > >(tee -a "$LOG_FILE") 2>&1
-
-echo "=== Начало выполнения скрипта $(date) ==="
+echo "=== Начало выполнения скрипта $(date) ===" > "$LOG_FILE"
+exec >> "$LOG_FILE" 2>&1
 
 # Универсальная функция установки пакетов
 install_package() {
