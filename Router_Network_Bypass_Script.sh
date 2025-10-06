@@ -144,131 +144,6 @@ checkPackageAndInstall() {
     fi
 }
 
-requestConfWARP1() {
-    # запрос конфигурации WARP
-    local result
-    result=$(curl --connect-timeout 20 --max-time 60 -w "%{http_code}" 'https://valokda-amnezia.vercel.app/api/warp' \
-        -H 'accept: */*' \
-        -H 'accept-language: ru-RU,ru;q=0.9' \
-        -H 'referer: https://valokda-amnezia.vercel.app/api/warp' 2>/dev/null)
-    echo "$result"
-}
-
-requestConfWARP2() {
-    # запрос конфигурации WARP
-    local result
-    result=$(curl --connect-timeout 20 --max-time 60 -w "%{http_code}" 'https://warp-gen.vercel.app/generate-config' \
-        -H 'accept: */*' \
-        -H 'accept-language: ru-RU,ru;q=0.9' \
-        -H 'referer: https://warp-gen.vercel.app/generate-config' 2>/dev/null)
-    echo "$result"
-}
-
-requestConfWARP3() {
-    # запрос конфигурации WARP
-    local result
-    result=$(curl --connect-timeout 20 --max-time 60 -w "%{http_code}" 'https://config-generator-warp.vercel.app/warpd' \
-        -H 'accept: */*' \
-        -H 'accept-language: ru-RU,ru;q=0.9' \
-        -H 'referer: https://config-generator-warp.vercel.app/' 2>/dev/null)
-    echo "$result"
-}
-
-requestConfWARP4() {
-    # запрос конфигурации WARP без параметров
-    local result
-    result=$(curl --connect-timeout 20 --max-time 60 -w "%{http_code}" 'https://config-generator-warp.vercel.app/warp6t' \
-        -H 'accept: */*' \
-        -H 'accept-language: ru-RU,ru;q=0.9' \
-        -H 'referer: https://config-generator-warp.vercel.app/' 2>/dev/null)
-    echo "$result"
-}
-
-requestConfWARP5() {
-    # запрос конфигурации WARP без параметров
-    local result
-    result=$(curl --connect-timeout 20 --max-time 60 -w "%{http_code}" 'https://config-generator-warp.vercel.app/warp4t' \
-        -H 'accept: */*' \
-        -H 'accept-language: ru-RU,ru;q=0.9' \
-        -H 'referer: https://config-generator-warp.vercel.app/' 2>/dev/null)
-    echo "$result"
-}
-
-requestConfWARP6() {
-    # запрос конфигурации WARP
-    local result
-    result=$(curl --connect-timeout 20 --max-time 60 -w "%{http_code}" 'https://warp-generator.vercel.app/api/warp' \
-        -H 'accept: */*' \
-        -H 'accept-language: ru-RU,ru;q=0.6' \
-        -H 'content-type: application/json' \
-        -H 'referer: https://warp-generator.vercel.app/' \
-        --data-raw '{"selectedServices":[],"siteMode":"all","deviceType":"computer"}' 2>/dev/null)
-    echo "$result"
-}
-
-# Функция для обработки выполнения запроса
-check_request() {
-    local response="$1"
-    local choice="$2"
-    
-    # Извлекаем код состояния
-    local response_code="${response: -3}"  # Последние 3 символа - это код состояния
-    local response_body="${response%???}"    # Все, кроме последних 3 символов - это тело ответа
-    
-    # Проверяем код состояния
-    if [ "$response_code" -eq 200 ]; then
-        case $choice in
-        1)
-            local content
-            content=$(echo "$response_body" | jq -r '.content')    
-            local warp_config
-            warp_config=$(echo "$content" | base64 -d)
-            echo "$warp_config"
-            ;;
-        2)
-            local content
-            content=$(echo "$response_body" | jq -r '.config')    
-            echo "$content"
-            ;;
-        3)
-            local content
-            content=$(echo "$response_body" | jq -r '.content')    
-            local warp_config
-            warp_config=$(echo "$content" | base64 -d)
-            echo "$warp_config"
-            ;;
-        4)
-            local content
-            content=$(echo "$response_body" | jq -r '.content')  
-            local warp_config
-            warp_config=$(echo "$content" | base64 -d)
-            echo "$warp_config"
-            ;;
-        5)
-            local content
-            content=$(echo "$response_body" | jq -r '.content')
-            local warp_config
-            warp_config=$(echo "$content" | base64 -d)
-            echo "$warp_config"
-            ;;
-        6)
-            local content
-            content=$(echo "$response_body" | jq -r '.content')  
-            content=$(echo "$content" | jq -r '.configBase64')  
-            local warp_config
-            warp_config=$(echo "$content" | base64 -d)
-            echo "$warp_config"
-            ;;
-        *)
-            echo "Error: Неверный выбор"
-            return 1
-        esac
-    else
-        echo "Error: HTTP код $response_code"
-        return 1
-    fi
-}
-
 checkAndAddDomainPermanentName() {
     local name="$1"
     local ip="$2"
@@ -304,51 +179,6 @@ byPassGeoBlockComssDNS() {
     uci add_list dhcp.cfg01411c.server='/*.oaiusercontent.com/127.0.0.1#5056'
     uci add_list dhcp.cfg01411c.server='/*.openai.com/127.0.0.1#5056'
     uci add_list dhcp.cfg01411c.server='/*.microsoft.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.windowsupdate.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.bing.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.supercell.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.seeurlpcl.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.supercellid.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.supercellgames.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.clashroyale.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.brawlstars.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.clash.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.clashofclans.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.x.ai/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.grok.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.github.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.forzamotorsport.net/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.forzaracingchampionship.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.forzarc.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.gamepass.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.orithegame.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.renovacionxboxlive.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.tellmewhygame.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xbox.co/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xbox.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xbox.eu/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xbox.org/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xbox360.co/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xbox360.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xbox360.eu/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xbox360.org/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxab.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxgamepass.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxgamestudios.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxlive.cn/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxlive.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxone.co/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxone.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxone.eu/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxplayanywhere.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxservices.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xboxstudios.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.xbx.lv/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.sentry.io/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.usercentrics.eu/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.recaptcha.net/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.gstatic.com/127.0.0.1#5056'
-    uci add_list dhcp.cfg01411c.server='/*.brawlstarsgame.com/127.0.0.1#5056'
     
     uci commit dhcp
 
@@ -366,96 +196,6 @@ byPassGeoBlockComssDNS() {
         echo "❌ Ошибка перезапуска DNS сервисов"
         return 1
     fi
-}
-
-deleteByPassGeoBlockComssDNS() {
-    echo "🧹 Удаление правил обхода геоблокировок..."
-    
-    # Удаление серверов
-    while uci delete dhcp.cfg01411c.server 2>/dev/null; do :; done
-    uci add_list dhcp.cfg01411c.server='127.0.0.1#5359'
-    
-    # Удаление доменов (только добавленных скриптом)
-    local domains_to_remove=("chatgpt.com" "openai.com" "webrtc.chatgpt.com" "ios.chat.openai.com" "searchgpt.com")
-    
-    for domain in "${domains_to_remove[@]}"; do
-        local index
-        index=$(uci show dhcp | grep "domain.*name.*$domain" | cut -d'[' -f2 | cut -d']' -f1 | head -1)
-        if [ -n "$index" ]; then
-            uci delete "dhcp.@domain[$index]"
-            echo "✅ Удален домен: $domain"
-        fi
-    done
-    
-    uci commit dhcp
-    
-    if service dnsmasq restart && service odhcpd restart && service doh-proxy restart; then
-        echo "✅ DNS сервисы перезапущены успешно"
-    else
-        echo "❌ Ошибка перезапуска DNS сервисов"
-        return 1
-    fi
-}
-
-install_youtubeunblock_packages() {
-    echo "📦 Установка YouTube Unblock пакетов..."
-    
-    if ! PKGARCH=$(opkg print-architecture | awk 'BEGIN {max=0} {if ($3 > max) {max = $3; arch = $2}} END {print arch}'); then
-        echo "❌ Не удалось определить архитектуру пакетов"
-        return 1
-    fi
-    
-    local VERSION=$(ubus call system board | jsonfilter -e '@.release.version')
-    local BASE_URL="https://github.com/Waujito/youtubeUnblock/releases/download/v1.1.0/"
-    local PACK_NAME="youtubeUnblock"
-    local AWG_DIR="/tmp/$PACK_NAME"
-    
-    mkdir -p "$AWG_DIR"
-    
-    # Проверка и установка зависимостей
-    local PACKAGES="kmod-nfnetlink-queue kmod-nft-queue kmod-nf-conntrack"
-    for pkg in $PACKAGES; do
-        checkPackageAndInstall "$pkg" "1" || return 1
-    done
-
-    # Установка основного пакета
-    if ! install_package "$PACK_NAME" "youtubeUnblock-1.1.0-2-2d579d5-${PKGARCH}-openwrt-23.05.ipk" \
-                        "${BASE_URL}youtubeUnblock-1.1.0-2-2d579d5-${PKGARCH}-openwrt-23.05.ipk" "$AWG_DIR"; then
-        rm -rf "$AWG_DIR"
-        return 1
-    fi
-
-    # Установка Luci интерфейса
-    local LUCI_PACK_NAME="luci-app-youtubeUnblock"
-    if ! install_package "$LUCI_PACK_NAME" "luci-app-youtubeUnblock-1.1.0-1-473af29.ipk" \
-                        "${BASE_URL}luci-app-youtubeUnblock-1.1.0-1-473af29.ipk" "$AWG_DIR"; then
-        rm -rf "$AWG_DIR"
-        return 1
-    fi
-
-    rm -rf "$AWG_DIR"
-    echo "✅ YouTube Unblock пакеты установлены успешно"
-}
-
-# Улучшенная проверка работы сервисов
-check_service_health() {
-    local service="$1"
-    local test_url="$2"
-    
-    if ! service "$service" status > /dev/null 2>&1; then
-        echo "❌ Сервис $service не запущен"
-        return 1
-    fi
-    
-    if [ -n "$test_url" ]; then
-        if ! curl --max-time 10 -s -o /dev/null "$test_url"; then
-            echo "⚠️ Сервис $service запущен, но тест не пройден"
-            return 2
-        fi
-    fi
-    
-    echo "✅ Сервис $service работает нормально"
-    return 0
 }
 
 # Безопасное создание бэкапа
@@ -477,6 +217,7 @@ create_backup() {
                     echo "❌ Ошибка при бэкапе $file"
                     return 1
                 fi
+                echo "✅ Бэкап $file создан"
             else
                 echo "⚠️ Файл $DIR/$file не существует, пропускаем"
             fi
@@ -487,7 +228,28 @@ create_backup() {
     fi
 }
 
-# Основная логика с улучшенной обработкой ошибок
+# Проверка работы сервисов
+check_service_health() {
+    local service="$1"
+    local test_url="$2"
+    
+    if ! service "$service" status > /dev/null 2>&1; then
+        echo "❌ Сервис $service не запущен"
+        return 1
+    fi
+    
+    if [ -n "$test_url" ]; then
+        if ! curl --max-time 10 -s -o /dev/null "$test_url"; then
+            echo "⚠️ Сервис $service запущен, но тест не пройден"
+            return 2
+        fi
+    fi
+    
+    echo "✅ Сервис $service работает нормально"
+    return 0
+}
+
+# Основная логика
 main() {
     local is_manual_input_parameters="${1:-n}"
     local is_reconfig_podkop="${2:-y}"
@@ -502,10 +264,16 @@ main() {
     fi
     
     # Установка обязательных пакетов
-    local required_packages="coreutils-base64 jq curl unzip opera-proxy zapret"
+    local required_packages="coreutils-base64 jq curl unzip"
     for pkg in $required_packages; do
         checkPackageAndInstall "$pkg" "1" || exit 1
     done
+    
+    # Установка AmneziaWG
+    if ! install_awg_packages; then
+        echo "❌ Ошибка установки AmneziaWG пакетов"
+        exit 1
+    fi
     
     # Проверка версии sing-box
     local findVersion="1.12.0"
@@ -517,36 +285,30 @@ main() {
     else
         echo "🔄 Установленная версия sing-box устарела или не установлена. Установка/обновление sing-box..."
         manage_package "podkop" "enable" "stop"
-        opkg remove --force-removal-of-dependent-packages "sing-box"
+        opkg remove --force-removal-of-dependent-packages "sing-box" 2>/dev/null || true
         checkPackageAndInstall "sing-box" "1" || exit 1
     fi
     
-    # Обновление пакетов AmneziaWG
-    echo "🔄 Обновление пакетов AmneziaWG..."
-    opkg upgrade amneziawg-tools
-    opkg upgrade kmod-amneziawg
-    opkg upgrade luci-app-amneziawg
-    
-    # Обновление zapret
-    echo "🔄 Обновление zapret..."
-    opkg upgrade zapret
-    opkg upgrade luci-app-zapret
-    manage_package "zapret" "enable" "start"
+    # Обновление пакетов
+    echo "🔄 Обновление пакетов..."
+    opkg upgrade amneziawg-tools 2>/dev/null || true
+    opkg upgrade kmod-amneziawg 2>/dev/null || true
+    opkg upgrade luci-app-amneziawg 2>/dev/null || true
     
     # Проверка установки dnsmasq-full
     if opkg list-installed | grep -q "dnsmasq-full "; then
         echo "✅ dnsmasq-full уже установлен"
     else
         echo "📦 Установка dnsmasq-full..."
-        if ! cd /tmp/ && opkg download dnsmasq-full; then
-            echo "❌ Ошибка загрузки dnsmasq-full"
-            exit 1
-        fi
-        
-        if opkg remove dnsmasq && opkg install dnsmasq-full --cache /tmp/; then
-            echo "✅ dnsmasq-full установлен успешно"
+        if cd /tmp/ && opkg download dnsmasq-full; then
+            if opkg remove dnsmasq && opkg install dnsmasq-full --cache /tmp/; then
+                echo "✅ dnsmasq-full установлен успешно"
+            else
+                echo "❌ Ошибка установки dnsmasq-full"
+                exit 1
+            fi
         else
-            echo "❌ Ошибка установки dnsmasq-full"
+            echo "❌ Ошибка загрузки dnsmasq-full"
             exit 1
         fi
     fi
@@ -560,22 +322,12 @@ main() {
     create_backup || exit 1
     
     # Дополнительные пакеты
-    checkPackageAndInstall "luci-app-dns-failsafe-proxy" "1"
-    checkPackageAndInstall "luci-i18n-stubby-ru" "0"
-    checkPackageAndInstall "luci-i18n-doh-proxy-ru" "0"
+    checkPackageAndInstall "luci-app-dns-failsafe-proxy" "0"
+    checkPackageAndInstall "opera-proxy" "0"
+    checkPackageAndInstall "zapret" "0"
     
     # Настройка конфигурационных файлов
     local URL="https://raw.githubusercontent.com/routerich/RouterichAX3000_configs/refs/heads/new_awg_podkop"
-    local config_files="doh-proxy dns-failsafe-proxy"
-    
-    for file in $config_files; do
-        echo "🔧 Настройка $file..."
-        if wget -q -O "/etc/config/$file" "$URL/config_files/$file"; then
-            echo "✅ $file настроен успешно"
-        else
-            echo "❌ Ошибка настройки $file"
-        fi
-    done
     
     # Настройка DHCP
     echo "🔧 Настройка DHCP..."
@@ -585,7 +337,7 @@ main() {
     
     # Настройка sing-box
     echo "🔧 Настройка sing-box..."
-    cat <<EOF > /etc/sing-box/config.json
+    cat <<'EOF' > /etc/sing-box/config.json
 {
     "log": {
     "disabled": true,
@@ -616,13 +368,7 @@ EOF
     uci set sing-box.main.enabled='1'
     uci set sing-box.main.user='root'
     uci add_list sing-box.main.ifaces='wan'
-    uci add_list sing-box.main.ifaces='wan2'
     uci add_list sing-box.main.ifaces='wan6'
-    uci add_list sing-box.main.ifaces='wwan'
-    uci add_list sing-box.main.ifaces='wwan0'
-    uci add_list sing-box.main.ifaces='modem'
-    uci add_list sing-box.main.ifaces='l2tp'
-    uci add_list sing-box.main.ifaces='pptp'
     uci commit sing-box
     
     # Добавление правил firewall
@@ -652,27 +398,32 @@ EOF
         echo "✅ Правила firewall уже существуют"
     fi
     
-    # Настройка zapret
-    echo "🔧 Проверка работы zapret..."
-    manage_package "podkop" "enable" "stop"
-    
-    local zapret_config_url="https://raw.githubusercontent.com/routerich/RouterichAX3000_configs/refs/heads/new_awg_podkop"
-    
-    if wget -q -O "/etc/config/zapret" "$zapret_config_url/config_files/zapret" &&
-       wget -q -O "/opt/zapret/ipset/zapret-hosts-user.txt" "$zapret_config_url/config_files/zapret-hosts-user.txt" &&
-       wget -q -O "/opt/zapret/init.d/openwrt/custom.d/50-stun4all" "$zapret_config_url/config_files/50-stun4all" &&
-       wget -q -O "/opt/zapret/init.d/openwrt/custom.d/50-wg4all" "$zapret_config_url/config_files/50-wg4all"; then
-        
-        chmod +x "/opt/zapret/init.d/openwrt/custom.d/50-stun4all"
-        chmod +x "/opt/zapret/init.d/openwrt/custom.d/50-wg4all"
-        
-        service zapret restart
-        echo "✅ Zapret настроен и перезапущен"
+    # Настройка обхода геоблокировок
+    echo "🔧 Настройка обхода геоблокировок..."
+    if byPassGeoBlockComssDNS; then
+        echo "✅ Обход геоблокировок настроен успешно"
     else
-        echo "❌ Ошибка настройки zapret"
+        echo "⚠️ Предупреждение: проблемы с настройкой обхода геоблокировок"
     fi
     
-    # Проверка работы zapret
-    local isWorkZapret=0
-    if curl -f -o /dev/null -k --connect-to ::google.com -L -H "Host: mirror.gcr.io" --max-time 120 \
-       "https://test.googlevideo.com/v2/cimg/android/blobs/sha256:2ab09b027e7f3a0c2e8bb1944ac46de38cebab7145
+    # Запуск сервисов
+    echo "🔧 Запуск сервисов..."
+    manage_package "sing-box" "enable" "start"
+    manage_package "opera-proxy" "enable" "start"
+    
+    # Финальные проверки
+    echo "🔍 Финальные проверки..."
+    check_service_health "sing-box"
+    check_service_health "opera-proxy"
+    
+    echo ""
+    echo "🎉 Конфигурация завершена успешно!"
+    echo "📋 Лог сохранен в: $LOG_FILE"
+    echo "💡 Рекомендуется перезагрузить роутер для применения всех изменений"
+}
+
+# Обработка сигналов
+trap 'echo "❌ Скрипт прерван"; exit 1' INT TERM
+
+# Запуск основной функции
+main "$@"
