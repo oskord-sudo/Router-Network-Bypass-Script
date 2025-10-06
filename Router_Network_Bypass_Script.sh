@@ -36,6 +36,9 @@ diagnose_package_issue() {
             "luci-app-dns-failsafe-proxy")
                 opkg list | grep -i "dns.*fail.*safe\|fail.*safe.*dns" | head -5
                 ;;
+            "zapret")
+                opkg list | grep -i "zapret\|block\|filter\|dpi" | head -10
+                ;;
             *)
                 opkg list | grep -i "$package" | head -5
                 ;;
@@ -116,6 +119,81 @@ checkPackageAndInstall() {
         fi
         return 1
     fi
+}
+
+# Специальная функция для установки Zapret
+install_zapret() {
+    echo "🔧 Специальная установка Zapret..."
+    
+    local packages="
+        zapret
+        luci-app-zapret
+        luci-i18n-zapret-ru
+        luci-i18n-zapret-en
+    "
+    
+    local found=0
+    for pkg in $packages; do
+        if opkg list | grep -q "^$pkg "; then
+            echo "✅ Найден пакет: $pkg"
+            if opkg install "$pkg"; then
+                echo "✅ $pkg установлен успешно"
+                found=1
+                # Не прерываем цикл, пробуем установить все найденные пакеты
+            else
+                echo "⚠️ Не удалось установить $pkg"
+            fi
+        fi
+    done
+    
+    if [ "$found" -eq 0 ]; then
+        echo "⚠️ Не удалось найти или установить Zapret в репозиториях"
+        echo "🔄 Попробуем установить из исходников или альтернативных источников..."
+        
+        # Попытка установки через GitHub
+        echo "📦 Попытка установки Zapret из GitHub..."
+        local zapret_github_url="https://github.com/bol-van/zapret/archive/refs/heads/master.zip"
+        local temp_dir="/tmp/zapret_install"
+        
+        mkdir -p "$temp_dir"
+        cd "$temp_dir"
+        
+        if wget -O zapret-master.zip "$zapret_github_url"; then
+            echo "✅ Архив Zapret загружен"
+            if unzip zapret-master.zip; then
+                echo "✅ Архив распакован"
+                if [ -d "zapret-master" ]; then
+                    cd zapret-master
+                    echo "🔧 Компиляция и установка Zapret из исходников..."
+                    if make && make install; then
+                        echo "✅ Zapret успешно установлен из исходников"
+                        found=1
+                    else
+                        echo "❌ Ошибка компиляции Zapret"
+                    fi
+                fi
+            else
+                echo "❌ Ошибка распаковки архива"
+            fi
+        else
+            echo "❌ Не удалось загрузить Zapret из GitHub"
+        fi
+        
+        rm -rf "$temp_dir"
+    fi
+    
+    if [ "$found" -eq 0 ]; then
+        echo "💡 Альтернативные решения для блокировки трафика:"
+        echo "   1. Используйте iptables/nftables для ручной блокировки"
+        echo "   2. Настройте dnsmasq для блокировки на DNS уровне"
+        echo "   3. Используйте AdBlock или другие фильтры"
+        echo "   4. Ручная установка Zapret:"
+        echo "      git clone https://github.com/bol-van/zapret.git"
+        echo "      cd zapret"
+        echo "      make && make install"
+    fi
+    
+    return $found
 }
 
 # Специальная функция для установки Opera Proxy
@@ -714,8 +792,8 @@ main() {
     # Дополнительные пакеты
     echo "📦 Установка дополнительных пакетов..."
     
-    # Zapret
-    checkPackageAndInstall "zapret" "0"
+    # Zapret (специальная обработка)
+    install_zapret
     
     # Opera Proxy (специальная обработка)
     install_opera_proxy
@@ -810,12 +888,23 @@ EOF
         echo "⚠️ Opera Proxy не установлен, пропускаем запуск"
     fi
     
+    # Запуск Zapret только если он установлен
+    if opkg list-installed | grep -q "zapret "; then
+        manage_package "zapret" "enable" "start"
+    else
+        echo "⚠️ Zapret не установлен, пропускаем запуск"
+    fi
+    
     # Финальные проверки
     echo "🔍 Финальные проверки..."
     check_service_health "sing-box"
     
     if opkg list-installed | grep -q "opera-proxy "; then
         check_service_health "opera-proxy"
+    fi
+    
+    if opkg list-installed | grep -q "zapret "; then
+        check_service_health "zapret"
     fi
     
     echo ""
