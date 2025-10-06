@@ -29,7 +29,17 @@ diagnose_package_issue() {
         
         # Поиск альтернативных имен
         echo "🔍 Поиск альтернативных имен пакета..."
-        opkg list | grep -i "dns.*fail.*safe\|fail.*safe.*dns" | head -5
+        case "$package" in
+            "opera-proxy")
+                opkg list | grep -i "opera\|proxy" | head -10
+                ;;
+            "luci-app-dns-failsafe-proxy")
+                opkg list | grep -i "dns.*fail.*safe\|fail.*safe.*dns" | head -5
+                ;;
+            *)
+                opkg list | grep -i "$package" | head -5
+                ;;
+        esac
     fi
     
     # Проверка зависимостей
@@ -108,7 +118,68 @@ checkPackageAndInstall() {
     fi
 }
 
-# Специальная функция для проблемных пакетов
+# Специальная функция для установки Opera Proxy
+install_opera_proxy() {
+    echo "🔧 Специальная установка Opera Proxy..."
+    
+    local packages="
+        opera-proxy
+        luci-app-opera-proxy
+        luci-i18n-opera-proxy-ru
+        luci-i18n-opera-proxy-en
+    "
+    
+    local found=0
+    for pkg in $packages; do
+        if opkg list | grep -q "^$pkg "; then
+            echo "✅ Найден пакет: $pkg"
+            if opkg install "$pkg"; then
+                echo "✅ $pkg установлен успешно"
+                found=1
+                break
+            else
+                echo "⚠️ Не удалось установить $pkg"
+            fi
+        fi
+    done
+    
+    if [ "$found" -eq 0 ]; then
+        echo "⚠️ Не удалось найти или установить Opera Proxy"
+        echo "🔍 Поиск альтернативных прокси пакетов..."
+        
+        local alternative_proxies="
+            https-dns-proxy
+            luci-app-https-dns-proxy
+            shadowsocks-libev
+            luci-app-shadowsocks
+            v2ray
+            xray
+        "
+        
+        for proxy in $alternative_proxies; do
+            if opkg list | grep -q "^$proxy "; then
+                echo "📦 Найден альтернативный прокси пакет: $proxy"
+                if opkg install "$proxy"; then
+                    echo "✅ $proxy установлен как альтернатива Opera Proxy"
+                    found=1
+                    break
+                fi
+            fi
+        done
+    fi
+    
+    if [ "$found" -eq 0 ]; then
+        echo "💡 Альтернативные решения для Opera Proxy:"
+        echo "   1. Используйте sing-box для проксирования трафика"
+        echo "   2. Настройте вручную другие прокси сервисы"
+        echo "   3. Пропустите установку Opera Proxy"
+        echo "   4. Установите вручную: opkg install https-dns-proxy"
+    fi
+    
+    return $found
+}
+
+# Специальная функция для проблемных пакетов DNS
 install_dns_failsafe_proxy() {
     echo "🔧 Специальная установка DNS Fail-Safe Proxy..."
     
@@ -174,11 +245,6 @@ install_awg_packages() {
         return 1
     fi
     
-    # Проверка что это bash скрипт (базовая проверка)
-    if ! head -n 5 "$temp_script" | grep -q "bash\|sh"; then
-        echo "⚠️  Загруженный файл может не быть скриптом"
-    fi
-    
     echo "🔧 Установка AmneziaWG..."
     # Выполнение скрипта
     if sh "$temp_script"; then
@@ -220,11 +286,6 @@ install_sing_box() {
         echo "❌ Загруженный скрипт sing-box пуст"
         rm -f "$temp_script"
         return 1
-    fi
-    
-    # Проверка что это bash скрипт
-    if ! head -n 5 "$temp_script" | grep -q "bash\|sh"; then
-        echo "⚠️  Загруженный файл sing-box может не быть скриптом"
     fi
     
     echo "🔧 Установка sing-box..."
@@ -272,7 +333,7 @@ install_awg_alternative() {
         return 1
     fi
     
-    # Установка основных пакетов (без массивов для совместимости с busybox)
+    # Установка основных пакетов
     echo "📦 Установка kmod-amneziawg..."
     local kmod_filename="kmod-amneziawg${PKGPOSTFIX}"
     local kmod_url="${BASE_URL}${kmod_filename}"
@@ -653,11 +714,11 @@ main() {
     # Дополнительные пакеты
     echo "📦 Установка дополнительных пакетов..."
     
-    # Opera Proxy
-    checkPackageAndInstall "opera-proxy" "0"
-    
     # Zapret
     checkPackageAndInstall "zapret" "0"
+    
+    # Opera Proxy (специальная обработка)
+    install_opera_proxy
     
     # DNS Fail-Safe Proxy (специальная обработка)
     install_dns_failsafe_proxy
@@ -741,12 +802,21 @@ EOF
     # Запуск сервисов
     echo "🔧 Запуск сервисов..."
     manage_package "sing-box" "enable" "start"
-    manage_package "opera-proxy" "enable" "start"
+    
+    # Запуск Opera Proxy только если он установлен
+    if opkg list-installed | grep -q "opera-proxy "; then
+        manage_package "opera-proxy" "enable" "start"
+    else
+        echo "⚠️ Opera Proxy не установлен, пропускаем запуск"
+    fi
     
     # Финальные проверки
     echo "🔍 Финальные проверки..."
     check_service_health "sing-box"
-    check_service_health "opera-proxy"
+    
+    if opkg list-installed | grep -q "opera-proxy "; then
+        check_service_health "opera-proxy"
+    fi
     
     echo ""
     echo "🎉 Конфигурация завершена успешно!"
