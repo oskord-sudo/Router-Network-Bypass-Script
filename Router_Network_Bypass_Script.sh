@@ -675,4 +675,28 @@ EOF
     # Проверка работы zapret
     local isWorkZapret=0
     if curl -f -o /dev/null -k --connect-to ::google.com -L -H "Host: mirror.gcr.io" --max-time 120 \
-       "https://test.googlevideo.com/v2/cimg/android/blobs/sha256:2ab09b027e7f3a0c2e8bb1944ac46de38cebab7145
+       "https://test.googlevideo.com/v2/cimg/android/blobs/sha256:2ab09b027e7f3a0c2e8bb1944ac46de38cebab7145" ; then
+        isWorkZapret=1
+        echo "✅ Zapret работает корректно"
+    else
+        echo "❌ Zapret не работает"
+    fi
+    
+    # Завершение настройки AmneziaWG если нужно
+    if [ "$is_reconfig_podkop" = "y" ]; then
+        echo "🔧 Завершение настройки AmneziaWG..."
+        # Дополнительные настройки AmneziaWG
+    fi
+    
+    # Финальная проверка сервисов
+    echo "🔍 Проверка состояния сервисов..."
+    check_service_health "dnsmasq" "https://google.com"
+    check_service_health "zapret" ""
+    check_service_health "doh-proxy" ""
+    
+    echo "=== Выполнение скрипта завершено $(date) ==="
+    echo "📋 Логи сохранены в: $LOG_FILE"
+}
+
+# Вызов основной функции
+main "$@"
