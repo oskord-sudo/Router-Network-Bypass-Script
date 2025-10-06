@@ -14,29 +14,50 @@ exec 2>&1
 
 echo "=== Начало выполнения скрипта $(date) ==="
 
-# Установка AmneziaWG через официальный скрипт
+# Безопасная установка AmneziaWG через официальный скрипт
 install_awg_packages() {
     echo "🔧 Установка AmneziaWG через официальный скрипт..."
     
     local install_url="https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/refs/heads/master/amneziawg-install.sh"
+    local temp_script="/tmp/amneziawg-install.sh"
     
     # Проверка доступности скрипта установки
     echo "📡 Проверка доступности скрипта установки..."
-    if wget --spider "$install_url" 2>/dev/null; then
-        echo "✅ Скрипт установки доступен"
-    else
+    if ! wget --spider "$install_url" 2>/dev/null; then
         echo "❌ Скрипт установки недоступен"
         return 1
     fi
     
-    # Установка с использованием официального скрипта
-    echo "🚀 Запуск официального скрипта установки AmneziaWG..."
-    if sh -c "$(wget -O - "$install_url")"; then
+    echo "✅ Скрипт установки доступен"
+    
+    # Безопасная загрузка скрипта
+    echo "⬇️  Загрузка скрипта установки..."
+    if ! wget -O "$temp_script" "$install_url"; then
+        echo "❌ Ошибка загрузки скрипта установки"
+        return 1
+    fi
+    
+    # Проверка что файл не пустой
+    if [ ! -s "$temp_script" ]; then
+        echo "❌ Загруженный скрипт пуст"
+        rm -f "$temp_script"
+        return 1
+    fi
+    
+    # Проверка что это bash скрипт (базовая проверка)
+    if ! head -n 5 "$temp_script" | grep -q "bash\|sh"; then
+        echo "⚠️  Загруженный файл может не быть скриптом"
+    fi
+    
+    echo "🔧 Установка AmneziaWG..."
+    # Выполнение скрипта
+    if sh "$temp_script"; then
         echo "✅ AmneziaWG успешно установлен через официальный скрипт"
+        rm -f "$temp_script"
         return 0
     else
         echo "❌ Ошибка установки AmneziaWG через официальный скрипт"
-        echo "🔄 Попробуем альтернативный метод установки..."
+        rm -f "$temp_script"
         return 1
     fi
 }
@@ -47,7 +68,10 @@ install_awg_alternative() {
     
     # Определение архитектуры
     local PKGARCH
-    PKGARCH=$(opkg print-architecture | awk 'BEGIN {max=0} {if ($3 > max) {max = $3; arch = $2}} END {print arch}')
+    if ! PKGARCH=$(opkg print-architecture | awk 'BEGIN {max=0} {if ($3 > max) {max = $3; arch = $2}} END {print arch}'); then
+        echo "❌ Не удалось определить архитектуру пакетов"
+        return 1
+    fi
     
     local TARGET
     TARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 1)
@@ -65,34 +89,56 @@ install_awg_alternative() {
     local BASE_URL="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/"
     local AWG_DIR="/tmp/amneziawg"
     
-    mkdir -p "$AWG_DIR"
+    if ! mkdir -p "$AWG_DIR"; then
+        echo "❌ Не удалось создать временную директорию"
+        return 1
+    fi
     
-    # Установка основных пакетов
-    local packages=(
-        "kmod-amneziawg"
-        "amneziawg-tools" 
-        "luci-app-amneziawg"
-    )
+    # Установка основных пакетов (без массивов для совместимости с busybox)
+    echo "📦 Установка kmod-amneziawg..."
+    local kmod_filename="kmod-amneziawg${PKGPOSTFIX}"
+    local kmod_url="${BASE_URL}${kmod_filename}"
     
-    for package in "${packages[@]}"; do
-        local filename="${package}${PKGPOSTFIX}"
-        local url="${BASE_URL}${filename}"
-        
-        echo "📦 Установка $package..."
-        
-        # Загрузка пакета
-        if wget -O "${AWG_DIR}/${filename}" "$url"; then
-            # Установка пакета
-            if opkg install "${AWG_DIR}/${filename}"; then
-                echo "✅ $package установлен успешно"
-            else
-                echo "⚠️ Ошибка установки $package, пробуем с --force-overwrite"
-                opkg install --force-overwrite "${AWG_DIR}/${filename}" || echo "❌ Не удалось установить $package"
-            fi
+    if wget -O "${AWG_DIR}/${kmod_filename}" "$kmod_url"; then
+        if opkg install "${AWG_DIR}/${kmod_filename}"; then
+            echo "✅ kmod-amneziawg установлен успешно"
         else
-            echo "❌ Не удалось загрузить $package"
+            echo "⚠️ Ошибка установки kmod-amneziawg, пробуем с --force-overwrite"
+            opkg install --force-overwrite "${AWG_DIR}/${kmod_filename}" || echo "❌ Не удалось установить kmod-amneziawg"
         fi
-    done
+    else
+        echo "❌ Не удалось загрузить kmod-amneziawg"
+    fi
+    
+    echo "📦 Установка amneziawg-tools..."
+    local tools_filename="amneziawg-tools${PKGPOSTFIX}"
+    local tools_url="${BASE_URL}${tools_filename}"
+    
+    if wget -O "${AWG_DIR}/${tools_filename}" "$tools_url"; then
+        if opkg install "${AWG_DIR}/${tools_filename}"; then
+            echo "✅ amneziawg-tools установлен успешно"
+        else
+            echo "⚠️ Ошибка установки amneziawg-tools, пробуем с --force-overwrite"
+            opkg install --force-overwrite "${AWG_DIR}/${tools_filename}" || echo "❌ Не удалось установить amneziawg-tools"
+        fi
+    else
+        echo "❌ Не удалось загрузить amneziawg-tools"
+    fi
+    
+    echo "📦 Установка luci-app-amneziawg..."
+    local luci_filename="luci-app-amneziawg${PKGPOSTFIX}"
+    local luci_url="${BASE_URL}${luci_filename}"
+    
+    if wget -O "${AWG_DIR}/${luci_filename}" "$luci_url"; then
+        if opkg install "${AWG_DIR}/${luci_filename}"; then
+            echo "✅ luci-app-amneziawg установлен успешно"
+        else
+            echo "⚠️ Ошибка установки luci-app-amneziawg, пробуем с --force-overwrite"
+            opkg install --force-overwrite "${AWG_DIR}/${luci_filename}" || echo "❌ Не удалось установить luci-app-amneziawg"
+        fi
+    else
+        echo "❌ Не удалось загрузить luci-app-amneziawg"
+    fi
     
     rm -rf "$AWG_DIR"
     
@@ -359,7 +405,8 @@ main() {
         if ! install_awg_alternative; then
             echo "❌ Не удалось установить AmneziaWG"
             echo "💡 Установите AmneziaWG вручную:"
-            echo "   sh -c \"\$(wget -O - https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/master/amneziawg-install.sh)\""
+            echo "   wget -O /tmp/install.sh https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/master/amneziawg-install.sh"
+            echo "   sh /tmp/install.sh"
         fi
     fi
     
